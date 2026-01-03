@@ -1,0 +1,11 @@
+solana-py
+tweepy
+torch
+requests
+pandas
+numpy
+textblob
+streamlit
+sqlite3
+python-dotenv
+matplotlib
