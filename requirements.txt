@@ -1,6 +1,7 @@
 streamlit
 torch
 solana
+solders
 tweepy
 textblob
 matplotlib
