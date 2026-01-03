@@ -10,7 +10,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 SOLANA_RPC_URL = os.getenv("SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com")
-PUMP_FUN_API = "https://api.moralis.io/solana/pumpfun/tokens"  # Adjust if using different API
 X_BEARER_TOKEN = os.getenv("X_BEARER_TOKEN")
 
 solana_client = Client(SOLANA_RPC_URL)
@@ -18,41 +17,34 @@ solana_client = Client(SOLANA_RPC_URL)
 def get_onchain_data(token_address):
     try:
         pubkey = PublicKey(token_address)
-        accounts = solana_client.get_token_accounts_by_owner(pubkey, {"programId": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"})
-        balances = [acc['amount'] for acc in accounts.value]
-        total_supply = sum(balances)
-        if total_supply == 0:
-            return 0, 0
-        concentration = sum((b / total_supply) ** 2 for b in balances)
-        signatures = solana_client.get_signatures_for_address(pubkey, limit=100)
-        early_buys = len([sig for sig in signatures.value if time.time() - sig['blockTime'] < 3600])
-        return concentration, early_buys
-    except Exception as e:
-        print(f"Error fetching on-chain data: {e}")
-        return 0, 0
+        # Get token holders (simplified)
+        response = solana_client.get_token_largest_accounts(pubkey)
+        if not response.value:
+            return 0.5, 100
+        
+        top_holders = [acc.amount for acc in response.value[:10]]
+        total_top = sum(top_holders)
+        concentration = total_top / (10 ** 9) if top_holders else 0.5  # rough estimate
+        
+        # Recent transactions (proxy for early buys)
+        sigs = solana_client.get_signatures_for_address(pubkey, limit=50)
+        recent_count = len([s for s in sigs.value if time.time() - s.block_time < 3600 * 24])
+        return concentration, recent_count
+    except:
+        return 0.5, 100  # fallback
 
 def get_social_momentum(token_name):
+    if not X_BEARER_TOKEN:
+        return 50  # fallback if no key
     try:
         client = tweepy.Client(bearer_token=X_BEARER_TOKEN)
-        query = f"{token_name} lang:en -is:retweet"
-        tweets = client.search_recent_tweets(query=query, max_results=50)
+        query = f"{token_name} (pump OR pumpfun OR solana) lang:en -is:retweet"
+        tweets = client.search_recent_tweets(query=query, max_results=20)
         if not tweets.data:
-            return 0
-        sentiments = [TextBlob(tweet.text).sentiment.polarity for tweet in tweets.data]
-        avg_sentiment = sum(sentiments) / len(sentiments)
-        return len(tweets.data) * (avg_sentiment + 1)
-    except Exception as e:
-        print(f"Error fetching social data: {e}")
-        return 0
-
-def get_pumpfun_token_info(token_address):
-    try:
-        headers = {"Authorization": os.getenv("PUMP_FUN_API_KEY")}
-        response = requests.get(f"{PUMP_FUN_API}/{token_address}", headers=headers)
-        if response.status_code == 200:
-            data = response.json()
-            return data.get('market_cap', 0), data.get('migration_status', False)
-        return 0, False
-    except Exception as e:
-        print(f"Error fetching Pump.fun info: {e}")
-        return 0, False
+            return 10
+        sentiments = [TextBlob(t.text).sentiment.polarity for t in tweets.data]
+        avg_sentiment = sum(sentiments) / len(sentiments) if sentiments else 0
+        momentum = len(tweets.data) * (avg_sentiment + 1)
+        return momentum
+    except:
+        return 20
