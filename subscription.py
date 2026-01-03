@@ -1,5 +1,5 @@
 from solana.rpc.api import Client
-from solana.publickey import PublicKey
+from solders.pubkey import Pubkey as PublicKey
 import sqlite3
 from datetime import datetime, timedelta
 import uuid
