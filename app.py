@@ -1,63 +1,71 @@
 import streamlit as st
 from model import train_model, predict, simulate_what_if
 from data_fetch import get_onchain_data, get_social_momentum
-from subscription import check_calls, process_payment, YOUR_WALLET
+from subscription import check_calls, process_payment
 import matplotlib.pyplot as plt
 import torch
+import os
 
 # Load or train model
-try:
+if os.path.exists('model.pth'):
     model = train_model()
     model.load_state_dict(torch.load('model.pth'))
-except FileNotFoundError:
+else:
     model = train_model()
 
 st.title("AI Token Longevity Predictor")
-st.info("Note: 40% of subscription revenue goes to buyback & burn for $DEDU token!")
+st.info("Note: 40% of all subscription revenue will be used for buyback & burn of $DEDU token!")
 
-user_id = st.text_input("Your User ID (from subscription)")
-token_address = st.text_input("Token Address")
-token_name = st.text_input("Token Name (for social search)")
+user_id = st.text_input("Your User ID (received after subscription)")
 
-if st.button("Subscribe"):
-    tier_options = {
-        "Base (1 SOL - 1000 calls)": "base",
-        "Addon 500 (0.3 SOL)": "addon_500",
-        "Addon 200 (0.1 SOL)": "addon_200",
-        "Addon 100 (0.05 SOL)": "addon_100"
-    }
-    tier_label = st.selectbox("Tier", list(tier_options.keys()))
-    tier = tier_options[tier_label]
-    st.write(f"Send payment to: {str(YOUR_WALLET)}")
-    tx_sig = st.text_input("Enter TX Signature after payment")
-    user_wallet = st.text_input("Your Wallet")
-    if tx_sig and user_wallet:
+token_address = st.text_input("Pump.fun Token Address (mint)")
+token_name = st.text_input("Token Name or Ticker (for social search, e.g. DEDU)")
+
+if st.button("Subscribe / Add Calls"):
+    st.write("### Subscription Tiers")
+    st.write("- **Base**: 1 SOL → 1,000 calls/month")
+    st.write("- **Addon 500**: 0.3 SOL → +500 calls")
+    st.write("- **Addon 200**: 0.1 SOL → +200 calls")
+    st.write("- **Addon 100**: 0.05 SOL → +100 calls")
+    st.write("**Send exact amount to:** `G2KVhsRMLdxfHYPd2aEUHL3T8EX4WgZSFW34q3JHF37o`")
+    
+    tier = st.selectbox("Choose tier", ["base", "addon_500", "addon_200", "addon_100"])
+    tx_sig = st.text_input("Paste Transaction Signature here")
+    user_wallet = st.text_input("Your Solana Wallet Address")
+    
+    if st.button("Verify Payment"):
         new_id = process_payment(tx_sig, user_wallet, tier)
         if new_id:
-            st.success(f"Subscribed! User ID: {new_id}")
+            st.success(f"Subscription active! Your User ID: `{new_id}`")
+            st.info("Save this User ID — you'll need it to make predictions.")
         else:
-            st.error("Payment verification failed. Check TX.")
+            st.error("Payment not verified. Check amount, wallet, and try again.")
 
-if st.button("Predict") and user_id:
+if st.button("Run Prediction") and user_id:
     if not check_calls(user_id):
-        st.error("No calls left or expired. Subscribe!")
+        st.error("No calls remaining or subscription expired. Please subscribe again.")
     else:
-        concentration, early_buys = get_onchain_data(token_address)
-        social = get_social_momentum(token_name)
-        features = [concentration, early_buys, social]
-        
-        prob, rug_risk, reward = predict(model, features)
-        st.write(f"Survival Probability: {prob:.2%}")
-        st.write(f"Rug Risk: {rug_risk:.2%}")
-        st.write(f"Potential Reward (5x chance): {reward:.2f}")
-        
-        # What-if
-        if st.checkbox("Run What-If Simulation"):
-            multiplier = st.slider("Social Replies Multiplier", 1.0, 2.0)
-            sim_prob, _, _ = simulate_what_if(model, features, {'social_momentum': multiplier})
-            st.write(f"Projected Survival if Social Changes: {sim_prob:.2%}")
-        
-        # Chart
-        fig, ax = plt.subplots()
-        ax.bar(['Survival', 'Rug Risk'], [prob, rug_risk])
-        st.pyplot(fig)
+        with st.spinner("Fetching data and predicting..."):
+            concentration, early_buys = get_onchain_data(token_address)
+            social = get_social_momentum(token_name)
+            features = [concentration, early_buys, social]
+            
+            prob, rug_risk, reward = predict(model, features)
+            
+            st.success("Prediction Complete!")
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Survival Probability", f"{prob:.1%}")
+            col2.metric("Rug Risk", f"{rug_risk:.1%}")
+            col3.metric("Potential Reward Score", f"{reward:.1f}x")
+            
+            # What-if simulation
+            st.write("### What-If Simulation")
+            multiplier = st.slider("Increase social momentum by", 1.0, 3.0, 2.0)
+            sim_prob, sim_rug, sim_reward = simulate_what_if(model, features, {'social_momentum': multiplier})
+            st.write(f"If social momentum ×{multiplier}: Survival → **{sim_prob:.1%}** | Reward → **{sim_reward:.1f}x**")
+            
+            # Simple chart
+            fig, ax = plt.subplots()
+            ax.bar(['Survival Chance', 'Rug Risk'], [prob, rug_risk], color=['#00ff00', '#ff4444'])
+            ax.set_ylim(0, 1)
+            st.pyplot(fig)
