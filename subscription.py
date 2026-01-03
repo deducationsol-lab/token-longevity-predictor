@@ -12,65 +12,58 @@ SOLANA_RPC_URL = os.getenv("SOLANA_RPC_URL", "https://api.mainnet-beta.solana.co
 YOUR_WALLET = PublicKey("G2KVhsRMLdxfHYPd2aEUHL3T8EX4WgZSFW34q3JHF37o")
 solana_client = Client(SOLANA_RPC_URL)
 
-# Pricing tiers (in SOL)
-BASE_SUB = 1.0  # 1000 calls
-ADDON_500 = 0.3
-ADDON_200 = 0.1
-ADDON_100 = 0.05
+# Tiers in SOL
+TIERS = {
+    "base": (1.0, 1000),
+    "addon_500": (0.3, 500),
+    "addon_200": (0.1, 200),
+    "addon_100": (0.05, 100)
+}
 
-conn = sqlite3.connect('database.db')
-cursor = conn.cursor()
-cursor.execute('''CREATE TABLE IF NOT EXISTS users 
-                  (user_id TEXT PRIMARY KEY, wallet TEXT, calls_left INT, expiry DATE)''')
+conn = sqlite3.connect('database.db', check_same_thread=False)
+c = conn.cursor()
+c.execute('''CREATE TABLE IF NOT EXISTS users 
+             (user_id TEXT PRIMARY KEY, wallet TEXT, calls_left INTEGER, expiry TEXT)''')
 conn.commit()
 
-def process_payment(tx_sig, user_wallet, tier='base'):
+def process_payment(tx_sig, user_wallet, tier):
     try:
         tx = solana_client.get_transaction(tx_sig, max_supported_transaction_version=0)
-        if not tx['result']:
-            return False
-        # Parse transfers (simplified; check for SOL transfer to YOUR_WALLET)
-        pre_balances = tx['result']['meta']['preBalances']
-        post_balances = tx['result']['meta']['postBalances']
-        account_keys = tx['result']['transaction']['message']['accountKeys']
-        wallet_index = next((i for i, key in enumerate(account_keys) if key == str(YOUR_WALLET)), None)
-        if wallet_index is None:
-            return False
-        amount_received = (post_balances[wallet_index] - pre_balances[wallet_index]) / 1e9  # Lamports to SOL
-        
-        expected_amount = {
-            'base': BASE_SUB,
-            'addon_500': ADDON_500,
-            'addon_200': ADDON_200,
-            'addon_100': ADDON_100
-        }.get(tier, 0)
-        if amount_received != expected_amount:
+        if not tx.get('result'):
             return False
         
-        calls_to_add = {
-            'base': 1000,
-            'addon_500': 500,
-            'addon_200': 200,
-            'addon_100': 100
-        }.get(tier, 0)
-        expiry = (datetime.now() + timedelta(days=30)).date()
+        meta = tx['result']['meta']
+        pre = meta['preBalances']
+        post = meta['postBalances']
+        keys = tx['result']['transaction']['message']['accountKeys']
         
-        user_id = str(uuid.uuid4())
-        cursor.execute("INSERT OR REPLACE INTO users (user_id, wallet, calls_left, expiry) VALUES (?, ?, ?, ?)",
-                       (user_id, user_wallet, calls_to_add, expiry))
-        conn.commit()
-        return user_id
-    except Exception as e:
-        print(f"Error processing payment: {e}")
+        try:
+            wallet_idx = keys.index(str(YOUR_WALLET))
+        except ValueError:
+            return False
+        
+        received = (post[wallet_idx] - pre[wallet_idx]) / 1e9
+        expected_amount, calls = TIERS.get(tier, (0, 0))
+        
+        if abs(received - expected_amount) < 0.01:  # small tolerance
+            expiry = (datetime.now() + timedelta(days=30)).strftime('%Y-%m-%d')
+            user_id = str(uuid.uuid4())
+            c.execute("INSERT OR REPLACE INTO users VALUES (?, ?, ?, ?)",
+                      (user_id, user_wallet, calls, expiry))
+            conn.commit()
+            return user_id
+        return False
+    except:
         return False
 
 def check_calls(user_id):
-    cursor.execute("SELECT calls_left, expiry FROM users WHERE user_id=?", (user_id,))
-    row = cursor.fetchone()
-    if not row or datetime.now().date() > datetime.strptime(row[1], '%Y-%m-%d').date():
+    c.execute("SELECT calls_left, expiry FROM users WHERE user_id=?", (user_id,))
+    row = c.fetchone()
+    if not row:
         return False
-    if row[0] <= 0:
+    calls_left, expiry = row
+    if datetime.strptime(expiry, '%Y-%m-%d') < datetime.now() or calls_left <= 0:
         return False
-    cursor.execute("UPDATE users SET calls_left = calls_left - 1 WHERE user_id=?", (user_id,))
+    c.execute("UPDATE users SET calls_left = calls_left - 1 WHERE user_id=?", (user_id,))
     conn.commit()
     return True
