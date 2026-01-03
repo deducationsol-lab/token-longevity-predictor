@@ -9,7 +9,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 SOLANA_RPC_URL = os.getenv("SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com")
-YOUR_WALLET = PublicKey("G2KVhsRMLdxfHYPd2aEUHL3T8EX4WgZSFW34q3JHF37o")
+YOUR_WALLET_STR = "G2KVhsRMLdxfHYPd2aEUHL3T8EX4WgZSFW34q3JHF37o"
+YOUR_WALLET = Pubkey.from_string(YOUR_WALLET_STR)
 solana_client = Client(SOLANA_RPC_URL)
 
 # Tiers in SOL
